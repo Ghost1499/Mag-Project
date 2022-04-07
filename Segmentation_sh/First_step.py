@@ -16,8 +16,8 @@ blue_tr_filename="2021-10-20_13_52_19_237.png"
 # filename='783.png'
 filename = blue_tr_filename
 path = os.path.join(test_folder, filename)
-# path = "/".join((base_path,test_folder, filename))
-# path = "C:\\Users\\zgstv\\JupyterLab Notebooks\\Mag-Project\\Segmentation_sh\\test_data\\2021-10-20_13_52_19_237.png"
+# test_path = "/".join((base_path,test_dir, filename))
+# test_path = "C:\\Users\\zgstv\\JupyterLab Notebooks\\Mag-Project\\Segmentation_sh\\test_data\\2021-10-20_13_52_19_237.png"
 img = cv2.imread(path)
 a= filename[0:len(filename) - 4]
 print(os.access(path,os.R_OK))
@@ -52,8 +52,8 @@ fn=a+'_C_.png'
 cv2.imwrite(fn,img_C_)
 
 #img_B = cv2.imread(filename,0)
-contours_C, hierarchy = cv2.findContours(img_C.astype('uint8'), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE) #create an empty image for contours img_contours = np.zeros(img.shape) # draw the contours on the empty image cv2.drawContours(img_contours, contours, -1, (0,255,0), 3) #save_results image cv2.imwrite('D:/contours.png',img_contours)
-img_contours_C = np.zeros(img_C.shape) # draw the contours on the empty image cv2.drawContours(img_contours, contours, -1, (0,255,0), 3) #save_results image cv2.imwrite('D:/contours.png',img_contours)
+contours_C, hierarchy = cv2.findContours(img_C.astype('uint8'), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE) #create an empty image for contours img_contours = np.zeros(img.shape) # draw the contours on the empty image cv2.drawContours(img_contours, contours, -1, (0,255,0), 3) #save_test_results image cv2.imwrite('D:/contours.png',img_contours)
+img_contours_C = np.zeros(img_C.shape) # draw the contours on the empty image cv2.drawContours(img_contours, contours, -1, (0,255,0), 3) #save_test_results image cv2.imwrite('D:/contours.png',img_contours)
 cv2.drawContours(img_contours_C,contours_C,-1,(255,0,0),-1)
 cv2.imwrite('contours_C.png',img_contours_C)
 

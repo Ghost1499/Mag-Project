@@ -8,7 +8,7 @@ import random
 from matplotlib import pyplot as plt
 from scipy import ndimage
 from skimage import feature, morphology
-from Segmentation_sh.my_fun_sh1 import propose_regions, test_model
+from Segmentation_sh.utils import propose_regions, test_model
 
 # from google.colab.patches import cv2_imshow
 filename = "test_data\\2021-10-20_13_32_07_783.png"
