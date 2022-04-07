@@ -5,7 +5,7 @@ from pathlib import Path
 import cv2 as cv
 import numpy as np
 from matplotlib import pyplot as plt
-from skimage.transform import resize,rotate
+from skimage.transform import resize, rotate
 
 from Segmentation_sh.utils import propose_regions, benchmark
 from Segmentation_sh.params_config import *
@@ -17,8 +17,6 @@ def test_from_dir(test_dir: [str, Path], result_dir: [str, Path]):
         test_dir = Path(test_dir)
     if type(result_dir) == str:
         result_dir = Path(result_dir)
-    # test_dir:Path
-    # result_dir:Path
     if not test_dir.is_dir():
         raise Exception("Тестовая директория не существует")
     # if not os.listdir(test_dir):
@@ -40,9 +38,12 @@ def test_from_dir(test_dir: [str, Path], result_dir: [str, Path]):
 def find_barcode(img_path, show_test_results=False, save_test_results=True, save_folder="results"):
     img = plt.imread(img_path)
     expected_size = 964, 1292
-    is_horisontal = lambda size: size[0]<size[1]
-    if is_horisontal(expected_size) != is_horisontal(img.shape[:2]):
-        img = img.transpose(1,0,2)
+
+    def is_horizontal(size):
+        return size[0] < size[1]
+
+    if is_horizontal(expected_size) != is_horizontal(img.shape[:2]):
+        img = img.transpose(1, 0, 2)
         # img = rotate(img,90,resize=True)
 
         # rows,cols = img.shape[:2]
@@ -57,17 +58,30 @@ def find_barcode(img_path, show_test_results=False, save_test_results=True, save
 
     path_p = Path(img_path)
     result_dir = Path(save_folder) / path_p.stem
-    vscore, boxes, regions_number = propose_regions(img, threshold, alpha, minbarea, maxbarea, minratio, n_sc, delta,
-                                                    save_test_results, show_test_results, result_dir)
+    scores, boxes, regions_number = propose_regions(img, threshold, alpha, min_box_area, max_box_area, min_sides_ratio,
+                                                    n_sc, delta, min_box_ratio, max_border_ratio, rsort_key,
+                                                    save_test_results,
+                                                    show_test_results, result_dir)
     if boxes is not None:
-        for box in boxes[::5]:
-            y, x, height, width = box
-            cv.rectangle(img, (x, y), (x + width, y + height), (255, 0, 0), 1)
+        for i, box in enumerate(boxes[:5]):
+            y, x, height, width, border = box
+            if i == 0:
+                color = (0, 255, 0)
+                thickness = 3
+            else:
+                color = (0, 0, 255)
+                thickness = 1
+            cv.rectangle(img, (x, y), (x + width, y + height), color, thickness)
+
+        for i, box in enumerate(boxes[np.arange(boxes.shape[0] // 10, boxes.shape[0], boxes.shape[0] // 10)]):
+            y, x, height, width, border = box
+            color = (255, 0, 0)
+            cv.rectangle(img, (x, y), (x + width, y + height), color, 1)
         if show_test_results:
             plt.figure(0, dpi=300)
             plt.imshow(img)
             plt.show()
         if save_test_results:
-            plt.imsave(result_dir/ "regions.jpg", img)
+            plt.imsave(result_dir / "regions.jpg", img)
     if save_test_results or show_test_results:
         print(f"Count of regions: {regions_number}")

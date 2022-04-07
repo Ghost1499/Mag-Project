@@ -1,7 +1,7 @@
 import os
 import time
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Optional
 
 import cv2
 import numpy as np
@@ -9,7 +9,7 @@ from matplotlib import pyplot as plt
 from scipy import ndimage
 from skimage import feature
 
-# from Segmentation_sh.params_config import *
+rsort_keys = {"area": 0, "sum_area_ratio": 1, "border_sum_area_ratio": 2, "box_border_ratio": 3}
 
 
 def benchmark(func):
@@ -23,18 +23,34 @@ def benchmark(func):
     return wrapper
 
 
-def propose_regions(img: np.ndarray, threshold: int, alpha: float, minbarea: int, maxbarea: int, minratio: float,
-                    n_sc: int, delta: int, save_results: bool,
-                    show_results: bool, save_folder) -> [Tuple[np.ndarray, np.ndarray, int], Tuple[None, None, int]]:
+def _image_region_sum(integral, y, x, height, width):
+    try:
+        region_sum = integral[y, x] - integral[y + height, x] - integral[y, x + width] + \
+                     integral[y + height, x + width]
+        return region_sum
+    except IndexError:
+        raise ValueError(
+            f"Один или несколько параметров (y={y},x={x},height={height},width={width} находятся за предлами "
+            f"интеграла изображения с размером {integral.shape}")
+
+
+def propose_regions(img: np.ndarray, threshold: int, alpha: float, min_box_area: int, max_box_area: int,
+                    min_sides_ratio: float, n_box_side_steps: int, delta: int, min_box_ratio: float,
+                    max_border_ratio: float, rsort_key: str,
+                    save_results: bool, show_results: bool, save_folder: Path) \
+        -> Tuple[Optional[np.ndarray], Optional[np.ndarray], int]:
     """
     :param img: изображение
     :param threshold: порог для бинаризации внутри edge_boxes
-    :param alpha: расчет смещений боксов по x и по y c перекрытием overloapratio=alpha
-    :param minbarea: минимальная площадь ?
-    :param maxbarea: максимальная площадь
-    :param minratio: минимальное соотношение сторон
-    :param n_sc: количество шагов поиска по масштабу ?
+    :param alpha: расчет смещений боксов по X и по Y c перекрытием overloapratio=alpha. Допустимые значения [0,1), где 0 перекрытие отсутствует.
+    :param min_box_area: минимальная площадь
+    :param max_box_area: максимальная площадь
+    :param min_sides_ratio: минимальное соотношение сторон
+    :param n_box_side_steps: количество шагов поиска по масштабу
     :param delta: сдвиг окна
+    :param min_box_ratio: минимальное значение соотношения интеграла бокса и его площади
+    :param max_border_ratio: максимальное значение соотношения интеграла рамки и её площади
+    :param rsort_key: атрибут, по которому сортируется массив результатов
     :param save_results: сохранять промежуточные изображения-результаты в файл (папка results)
     :param show_results: показывать промежуточные изображения-результаты
     :param save_folder: папка для сохранения промежуточных результов
@@ -43,107 +59,105 @@ def propose_regions(img: np.ndarray, threshold: int, alpha: float, minbarea: int
     Формирование предложений по областям интереса using a variant of the Edge Boxes algorithm.
 
     """
-    # .
-    # alpha = 0.65; #расчет смещений боксов по x и по y c перекрытием overloapratio=alpha
+    # alpha = 0.65; #расчет смещений боксов по X и по Y c перекрытием overloapratio=alpha
     # #beta  = 0.75; # for each bbox i, suppress all surrounded bbox j where j>i and overlap
     # #ratio is larger than overlapThreshold (beta)
-    # minbarea=1000; maxbarea=700000; #площади региона
-    # delta=10 #ширина полосы вдоль внешней границы бокса
-    # step_sc=(max_sc-min_sc)/n_sc; #шаг поиска по масштабу (по площади)
-    # step_vr=minratio; #шаг поиска по соотношению  сторон
+    # min_box_area=1000; max_box_area=700000; #площади региона
     if img is None:
-        raise Exception("Изображение None")
-    nx = img.shape[1]
-    ny = img.shape[0]
+        raise ValueError("Изображение None")
+    if alpha < 0 or alpha >= 1:
+        raise ValueError(f"Параметр alpha={alpha} находится вне допустимого диапазона", alpha)
+
+    img_width = img.shape[1]
+    img_height = img.shape[0]
     # параметры поиска областей
-    min_sc = np.sqrt(minbarea)
-    max_sc = np.sqrt(maxbarea)
-    if min_sc == max_sc:
-        max_sc = 1.25 * min_sc
-        n_sc = 1
-    step_sc = (max_sc - min_sc) / n_sc  # шаг поиска по масштабу (кореннь из площади)
-    maxratio = 1 / minratio
-    # step_vr=minratio #шаг поиска по соотношению  сторон
-
-    # Convert image to uint8
+    min_box_side = np.sqrt(min_box_area)
+    max_box_side = np.sqrt(max_box_area)
+    if min_box_side == max_box_side:
+        max_box_side = 1.25 * min_box_side
+        n_box_side_steps = 1
+    box_side_step = (max_box_side - min_box_side) / n_box_side_steps  # шаг поиска по масштабу (корень из
+    # площади)
     img = img.astype('uint8')
-    # threshold=200; #порог бинаризации после вычисления градиентов
-    img_prepared = edge_map(img, threshold, save_results, show_results,
-                            save_folder)  # контурный анализ и обработка изображений
+    img_prepared_barcode_h, img_prepared_barcode_v = edge_map(img, threshold, save_results, show_results,
+                                                              save_folder)  # контурный анализ и обработка изображений
 
-    # filename='img_CC.png'
-    # cv2.imwrite(filename,img_prepared)
-    CC = img_prepared / 255
-    int_C, sqsum, tilted = cv2.integral3(CC)
-    # filename='int_CC.png'
-    # cv2.imwrite(filename,int_C)
+    img_prepared_float_scaled_h = img_prepared_barcode_h / 255
+    img_prepared_float_scaled_v = img_prepared_barcode_v / 255
+    img_integral_sum_h, _, _ = cv2.integral3(img_prepared_float_scaled_h)
+    img_integral_sum_v, _, _ = cv2.integral3(img_prepared_float_scaled_v)
+    plt.imsave(save_folder / "img_integral_sum_h.jpg", img_integral_sum_h)
+    plt.imsave(save_folder / "img_integral_sum_v.jpg", img_integral_sum_v)
     # Организация начального поиска областей
-    va = np.arange(min_sc, max_sc + step_sc, step_sc)
-    lva = len(va)
-    va = va ** 2
-    if minratio == 1 / 3:
-        vr = np.array([1 / 3, 2 / 3, 1])
-    elif minratio == 1 / 2:
-        vr = np.array([1 / 2, 1])
-    elif minratio == 1 / 4:
-        vr = np.array([1 / 4, 1 / 2, 3 / 4, 1])
-    # vr=np.arange(minratio,maxratio,step_vr); 
-    lvr = len(vr)
+    box_areas = np.arange(min_box_side, max_box_side + box_side_step, box_side_step) ** 2
+    box_areas_count = len(box_areas)
+    box_ratios = np.arange(min_sides_ratio, 1 + min_sides_ratio, min_sides_ratio)
+    box_ratios_count = len(box_ratios)
     boxes_count = 0
-    step_x = np.zeros((lva, lvr), np.float32)
-    step_y = np.zeros((lva, lvr), np.float32)
+    step_x = np.zeros((box_areas_count, box_ratios_count), np.float32)
+    step_y = np.zeros((box_areas_count, box_ratios_count), np.float32)
     boxes = []  # генерируемые расположения и конфигура
-    vscore = []
-    for iva in range(lva):  # поиск по масштабу
-        for ivr in range(lvr):  # поиск по соотношению сторон бокса
+    scores = []
+    for area_i, area in enumerate(box_areas):  # поиск по масштабу
+        for ratio_i, ratio in enumerate(box_ratios):  # поиск по соотношению сторон бокса
             # определение конфигурации бокса
-            bx = np.floor((va[iva] / vr[ivr]) ** 0.5)
-            by = np.floor((va[iva] * vr[ivr]) ** 0.5)
-            if by < min_sc:
-                by = min_sc
-            if by > max_sc:
-                by = max_sc
-            if bx < min_sc:
-                bx = min_sc
-            if bx > max_sc:
-                bx = max_sc
-            bx = bx.astype('uint32')
-            by = by.astype('uint32')
-            # расчет смещений боксов фиксированной конфигурации bx,by по x и по y c перекрытием overloapratio=alpha
-            step_x[iva, ivr] = np.floor(bx * (1 - alpha) / (1 + alpha))
-            step_y[iva, ivr] = np.floor(by * (1 - alpha) / (1 + alpha))
-            x = np.arange(delta, nx - bx - delta, step_x[iva, ivr])
-            Kx = len(x)
-            y = np.arange(delta, ny - by - delta, step_y[iva, ivr])
-            Ky = len(y)
-            x = np.floor(x).astype('uint32')
-            y = np.floor(y).astype('uint32')
-            S0 = bx * by
-            S1 = (bx + 2 * delta) * (by + 2 * delta) - S0
-            for kx in range(Kx):
-                for ky in range(Ky):
-                    box = [y[ky], x[kx], by, bx]
-                    ib0 = int_C[y[ky], x[kx]] + int_C[y[ky] + by, x[kx] + bx] - int_C[y[ky] + by, x[kx]] - int_C[
-                        y[ky], x[kx] + bx]  # с учетом того что в массива
-                    ib1 = int_C[y[ky] - delta, x[kx] - delta] + int_C[y[ky] + by + delta, x[kx] + bx + delta] - int_C[
-                        y[ky] + by + delta, x[kx] - delta] - int_C[y[ky] - delta, x[kx] + bx + delta]
-                    ib1 = ib1 - ib0
-                    if minbarea < ib0 < maxbarea:
-                        # print(ib0,ib0/S0,ib1/S1)
-                        if ib0 / S0 > 0.25 and ib1 / S1 < 0.25:  # в боксе есть крупные объекты и вдоль границ бокса мало объектов
-                            vs = [ib0, ib0 / S0, ib1 / S1, ib0 / S0 * (1 - ib1 / S1)]
-                            vscore.append(vs)
-                            boxes.append(box)
-                            boxes_count += 1
+            box_width = np.floor((area / ratio) ** 0.5)
+            box_height = np.floor((area * ratio) ** 0.5)
+            if box_height < min_box_side:
+                box_height = min_box_side
+            if box_height > max_box_side:
+                box_height = max_box_side
+            if box_width < min_box_side:
+                box_width = min_box_side
+            if box_width > max_box_side:
+                box_width = max_box_side
+            box_width = box_width.astype('uint32')
+            box_height = box_height.astype('uint32')
+            # расчет смещений боксов фиксированной конфигурации box_width, box_height по X и по Y c перекрытием
+            # overloapratio=alpha
+            step_x[area_i, ratio_i] = np.floor(box_width * (1 - alpha) / (1 + alpha))
+            step_y[area_i, ratio_i] = np.floor(box_height * (1 - alpha) / (1 + alpha))
+            X_barcode_h = np.floor(np.arange(delta, img_width - box_width - delta, step_x[area_i, ratio_i])).astype(
+                'uint32')
+            X_barcode_v = np.floor(np.arange(delta, img_width - box_height - delta, step_y[area_i, ratio_i])).astype(
+                "uint32")
+            Y_barcode_h = np.floor(np.arange(delta, img_height - box_height - delta, step_y[area_i, ratio_i])).astype(
+                "uint32")
+            Y_barcode_v = np.floor(np.arange(delta, img_height - box_width - delta, step_x[area_i, ratio_i])).astype(
+                "uint32")
+            XY_directions = [(X_barcode_h, Y_barcode_h, box_width, box_height, img_integral_sum_h),
+                             (X_barcode_v, Y_barcode_v, box_height, box_width, img_integral_sum_v)]
+            box_area_final = box_width * box_height
+            border_area = (box_width + 2 * delta) * (box_height + 2 * delta) - box_area_final
+            for X, Y, cur_box_width, cur_box_height, img_integral_sum in XY_directions:
+                for x in X:
+                    for y in Y:
+                        box = [y, x, cur_box_height, cur_box_width]
+                        box_sum = _image_region_sum(img_integral_sum, y, x, cur_box_height, cur_box_width)
+                        border_sum = _image_region_sum(img_integral_sum, y - delta, x - delta, cur_box_height + delta,
+                                                       cur_box_width + delta)
+                        border_sum -= box_sum
+                        if min_box_area < box_sum < max_box_area:  # ???!!!
+                            if box_sum / box_area_final > min_box_ratio and border_sum / border_area < max_border_ratio:
+                                # в боксе есть крупные объекты и вдоль границ бокса мало объектов
+                                score = [box_sum, box_sum / box_area_final, border_sum / border_area,
+                                         box_sum / box_area_final * (1 - border_sum / border_area)]
+                                scores.append(score)
+                                box.append(delta)
+                                boxes.append(box)
+                                boxes_count += 1
     if boxes_count == 0:
         return None, None, 0
     else:
         boxes = np.array(boxes, np.uint32)
-        vscore_ = np.array(vscore)
-        ef1 = np.argsort(-vscore_[:, 3])  # сортировка в порядке убывания площади объекта
-        vscore_select = vscore_[ef1, :]
-        boxes_select = boxes[ef1, :]
-        return vscore_select, boxes_select, boxes_count
+        scores = np.array(scores)
+        indexes_sorted = np.argsort(
+            -scores[:,
+             rsort_keys[rsort_key]])  # сортировка в порядке убывания соотношения box_sum / box_area_final * (1 -
+        # border_sum / border_area)
+        scores_selected = scores[indexes_sorted, :]
+        boxes_selected = boxes[indexes_sorted, :]
+        return scores_selected, boxes_selected, boxes_count
 
 
 def edge_map(img, threshold, save_results=False, show_results=False, save_folder=None):
@@ -153,12 +167,12 @@ def edge_map(img, threshold, save_results=False, show_results=False, save_folder
     grad_x = cv2.Sobel(img_gray, ddepth=cv2.CV_64F, dx=1, dy=0, ksize=3)
     grad_x = np.absolute(grad_x)
     kernel_recth = cv2.getStructuringElement(cv2.MORPH_RECT, (10, 2))
-    img_closed_rectv = cv2.morphologyEx(grad_x, cv2.MORPH_CLOSE, kernel_recth)
+    grad_x_closed_rect = cv2.morphologyEx(grad_x, cv2.MORPH_CLOSE, kernel_recth)
 
     grad_y = cv2.Sobel(img_gray, ddepth=cv2.CV_64F, dx=0, dy=1, ksize=3)
     grad_y = np.absolute(grad_y)
     kernel_recthv = np.transpose(kernel_recth, axes=(1, 0))
-    img_closed_recth = cv2.morphologyEx(grad_y, cv2.MORPH_CLOSE, kernel_recthv)
+    grad_y_closed_rect = cv2.morphologyEx(grad_y, cv2.MORPH_CLOSE, kernel_recthv)
 
     # grad_subtract = cv2.subtract(grad_x, grad_y)  # вычитание градиентов
     # grad_subtract = np.absolute(grad_subtract)
@@ -166,25 +180,39 @@ def edge_map(img, threshold, save_results=False, show_results=False, save_folder
     # kernel_round = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     # grad_subtract_bin = cv2.morphologyEx(grad_subtract_bin, cv2.MORPH_OPEN, kernel_round, iterations=1)
 
-    # img_closed_rectv = cv2.erode(img_closed_rectv, None, iterations=4)
-    # img_closed_rectv = cv2.dilate(img_closed_rectv, None, iterations=4)
+    # grad_x_closed_rect = cv2.erode(grad_x_closed_rect, None, iterations=4)
+    # grad_x_closed_rect = cv2.dilate(grad_x_closed_rect, None, iterations=4)
 
     kernel_square = cv2.getStructuringElement(cv2.MORPH_RECT, (8, 8))
-    img_opened_square = cv2.morphologyEx(img_closed_rectv, cv2.MORPH_OPEN, kernel_square)
-    # img_opened_square = cv2.erode(img_opened_square, None, iterations=4)
-    # img_opened_square = cv2.dilate(img_opened_square, None, iterations=4)
-    img_opened_square = img_opened_square / img_opened_square.max() * 255
-    img_opened_square = img_opened_square.astype("uint8")
-    (_, bin) = cv2.threshold(img_opened_square, threshold, 255, cv2.THRESH_BINARY, )
+    grad_x_opened_square = cv2.morphologyEx(grad_x_closed_rect, cv2.MORPH_OPEN, kernel_square)
+    grad_y_opened_square = cv2.morphologyEx(grad_y_closed_rect, cv2.MORPH_OPEN, kernel_square)
+    # grad_x_opened_square = cv2.erode(grad_x_opened_square, None, iterations=4)
+    # grad_x_opened_square = cv2.dilate(grad_x_opened_square, None, iterations=4)
+
+    # !!!!!!!!!!!!!!!! пофиксить нормировку (после открытия поднимается изображение "поднимается")
+    # grad_x_opened_square = grad_x_opened_square / (2^64) * 255
+    # grad_x_opened_square = grad_x_opened_square.astype("uint8")
+
+    # grad_y_opened_square = grad_y_opened_square / (2^64) * 255
+    # grad_y_opened_square = grad_y_opened_square.astype("uint8")
+
+    (_, grad_x_bin) = cv2.threshold(grad_x_opened_square, threshold, 255, cv2.THRESH_BINARY)
+    (_, grad_y_bin) = cv2.threshold(grad_y_opened_square, threshold, 255, cv2.THRESH_BINARY)
 
     if save_results or show_results:
-        imgs = [img_gray, grad_x, grad_y,  # grad_subtract, grad_subtract_bin,
-                img_closed_rectv, img_closed_recth,
-                img_opened_square, bin]
-        names = ["gray", "grad x", 'grad y',  # "grad subtract", "grad subtract binary",
-                 "closing horizontal rect 2x16",
-                 "closing vertical rect 16x2",
-                 "opening square 8x8", "binary"]
+        imgs = [img_gray,
+                grad_x, grad_y,
+                grad_x_closed_rect, grad_y_closed_rect,
+                grad_x_opened_square, grad_y_opened_square,
+                grad_x_bin, grad_y_bin]
+        names = ["gray",
+                 "grad x", 'grad y',  # "grad subtract", "grad subtract binary",
+                 "grad x closed by rectangle 2x16", "grad x closed by rectangle 16x2",
+                 "grad x opening square 8x8", "grad y opening square 8x8",
+                 "grad x binary", "grad y binary"]
+
+        assert len(imgs) == len(names), "Длина списка тестовых изображений не равна длине списка имен тестовых " \
+                                        "изображений"
         cmap = "gray"
         if save_results:
             if not save_folder:
@@ -207,11 +235,7 @@ def edge_map(img, threshold, save_results=False, show_results=False, save_folder
                 plt.title(name)
                 plt.imshow(img, cmap=cmap)
                 plt.show()
-    return img_opened_square
-
-
-
-
+    return grad_x_bin, grad_y_bin
 
 # def test_walk(test_dir):
 #     for root, dirs, files in os.walk(test_dir):
@@ -269,8 +293,3 @@ def edge_map(img, threshold, save_results=False, show_results=False, save_folder
 # boxA[1,0]=2;   boxA[1,1]=2; boxA[1,2]=10;   boxA[1,3]=10;
 # boxB[1,0]=3;   boxB[1,1]=4; boxB[1,2]=22;   boxB[1,3]=22; 
 # iou=my_overlopratio(boxA,boxB)
-
-#
-
-#       edge_map(test_img, threshold, show_test_results=False, save_test_results=True)
-#     test_img("test_data/2021-10-20_13_32_07_783.png", save_folder="results/2021-10-20_13_32_07_783")
