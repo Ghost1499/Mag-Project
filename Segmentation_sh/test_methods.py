@@ -59,7 +59,7 @@ def find_barcode(img_path, show_test_results=False, save_test_results=True, save
     path_p = Path(img_path)
     result_dir = Path(save_folder) / path_p.stem
     scores, boxes, regions_number = propose_regions(img, threshold, alpha, min_box_area, max_box_area, min_sides_ratio,
-                                                    n_sc, delta, min_box_ratio, max_border_ratio, rsort_key,
+                                                    n_box_sides_steps, delta, min_box_ratio, max_border_ratio, rsort_key,
                                                     save_test_results,
                                                     show_test_results, result_dir)
     if boxes is not None:
@@ -87,3 +87,4 @@ def find_barcode(img_path, show_test_results=False, save_test_results=True, save
             plt.imsave(result_dir / "regions.jpg", img)
     if save_test_results or show_test_results:
         print(f"Count of regions: {regions_number}")
+

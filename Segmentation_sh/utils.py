@@ -9,6 +9,8 @@ import numpy as np
 from matplotlib import pyplot as plt
 from scipy import ndimage
 from skimage import feature
+from skimage.transform import resize
+from sklearn.feature_extraction import image
 
 rsort_keys = {"area": 0, "sum_area_ratio": 1, "border_sum_area_ratio": 2, "box_border_ratio": 3}
 
@@ -255,14 +257,45 @@ def mrglob(path: Path, *patterns):
     return it.chain.from_iterable(path.rglob(pattern) for pattern in patterns)
 
 
-def get_barcodes_from_dir(dir: Path):
+def get_files_from_dir(dir: Path,patterns, exclude = None):
     if not dir.is_dir():
         raise Exception("Директория не существует")
-    patterns = ["*.jpeg", "*.jpg", "*.png", "*.bmp"]
     paths = list(mrglob(dir, *patterns))
+    if exclude:
+        paths = [path for path in paths if path.stem not in exclude]
+    return paths
+
+
+def get_images_from_dir(dir:Path,exclude =None):
+    patterns = ["*.jpeg", "*.jpg", "*.png", "*.bmp"]
+    paths = get_files_from_dir(dir,patterns,exclude)
     names = [path.stem for path in paths]
-    barcodes = [plt.imread(dir / path) for path in paths]
-    return barcodes, names
+    images = [plt.imread(dir / path) for path in paths]
+    return images,names
+
+
+def extract_patches(img, patch_sizes,count=None):
+    patches = []
+    for patch_size in patch_sizes:
+        patches.extend(image.extract_patches_2d(img,patch_size = patch_size,max_patches = count,random_state = 0))
+    return patches
+
+
+def is_horizontal(size):
+    return size[0]<size[1]
+
+
+def make_horizontal(img, size):
+    size_h = is_horizontal(size)
+    img_h = is_horizontal(img.shape[0:2])
+    if size_h != img_h:
+        img = img.transpose((1,0,2))
+    return img
+
+
+def resize_img(img, size):
+    return resize(img,size,anti_aliasing=True)
+
 
 # def test_walk(test_dir):
 #     for root, dirs, files in os.walk(test_dir):
