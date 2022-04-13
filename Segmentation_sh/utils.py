@@ -2,6 +2,7 @@ import os
 import time
 from pathlib import Path
 from typing import Tuple, Optional
+import itertools as it
 
 import cv2
 import numpy as np
@@ -32,6 +33,39 @@ def _image_region_sum(integral, y, x, height, width):
         raise ValueError(
             f"Один или несколько параметров (y={y},x={x},height={height},width={width} находятся за предлами "
             f"интеграла изображения с размером {integral.shape}")
+
+
+def get_boxes_configurations(min_box_area, max_box_area, n_box_side_steps, min_sides_ratio):
+    min_box_side = np.sqrt(min_box_area)
+    max_box_side = np.sqrt(max_box_area)
+    if min_box_side == max_box_side:
+        max_box_side = 1.25 * min_box_side
+        n_box_side_steps = 1
+    box_side_step = (max_box_side - min_box_side) / n_box_side_steps  # шаг поиска по масштабу (корень из
+    # площади)
+
+    # Организация начального поиска областей
+    box_areas = np.arange(min_box_side, max_box_side + box_side_step, box_side_step) ** 2
+    box_ratios = np.arange(min_sides_ratio, 1 + min_sides_ratio, min_sides_ratio)
+    configurations = []  # генерируемые расположения и конфигура
+    for area_i, area in enumerate(box_areas):  # поиск по масштабу
+        for ratio_i, ratio in enumerate(box_ratios):  # поиск по соотношению сторон бокса
+            # определение конфигурации бокса
+            box_width = np.floor((area / ratio) ** 0.5)
+            box_height = np.floor((area * ratio) ** 0.5)
+            if box_height < min_box_side:
+                box_height = min_box_side
+            if box_height > max_box_side:
+                box_height = max_box_side
+            if box_width < min_box_side:
+                box_width = min_box_side
+            if box_width > max_box_side:
+                box_width = max_box_side
+            box_width = box_width.astype('uint32')
+            box_height = box_height.astype('uint32')
+            configurations.append((box_width, box_height))
+
+    return configurations
 
 
 def propose_regions(img: np.ndarray, threshold: int, alpha: float, min_box_area: int, max_box_area: int,
@@ -71,13 +105,7 @@ def propose_regions(img: np.ndarray, threshold: int, alpha: float, min_box_area:
     img_width = img.shape[1]
     img_height = img.shape[0]
     # параметры поиска областей
-    min_box_side = np.sqrt(min_box_area)
-    max_box_side = np.sqrt(max_box_area)
-    if min_box_side == max_box_side:
-        max_box_side = 1.25 * min_box_side
-        n_box_side_steps = 1
-    box_side_step = (max_box_side - min_box_side) / n_box_side_steps  # шаг поиска по масштабу (корень из
-    # площади)
+
     img = img.astype('uint8')
     img_prepared_barcode_h, img_prepared_barcode_v = edge_map(img, threshold, save_results, show_results,
                                                               save_folder)  # контурный анализ и обработка изображений
@@ -89,63 +117,48 @@ def propose_regions(img: np.ndarray, threshold: int, alpha: float, min_box_area:
     plt.imsave(save_folder / "img_integral_sum_h.jpg", img_integral_sum_h)
     plt.imsave(save_folder / "img_integral_sum_v.jpg", img_integral_sum_v)
     # Организация начального поиска областей
-    box_areas = np.arange(min_box_side, max_box_side + box_side_step, box_side_step) ** 2
-    box_areas_count = len(box_areas)
-    box_ratios = np.arange(min_sides_ratio, 1 + min_sides_ratio, min_sides_ratio)
-    box_ratios_count = len(box_ratios)
+    configurations = get_boxes_configurations(min_box_area, max_box_area, n_box_side_steps, min_sides_ratio)
     boxes_count = 0
-    step_x = np.zeros((box_areas_count, box_ratios_count), np.float32)
-    step_y = np.zeros((box_areas_count, box_ratios_count), np.float32)
-    boxes = []  # генерируемые расположения и конфигура
+    step_x = np.zeros(len(configurations), np.float32)
+    step_y = np.zeros(len(configurations), np.float32)
+    boxes = []  # генерируемые расположения и конфигурации
     scores = []
-    for area_i, area in enumerate(box_areas):  # поиск по масштабу
-        for ratio_i, ratio in enumerate(box_ratios):  # поиск по соотношению сторон бокса
-            # определение конфигурации бокса
-            box_width = np.floor((area / ratio) ** 0.5)
-            box_height = np.floor((area * ratio) ** 0.5)
-            if box_height < min_box_side:
-                box_height = min_box_side
-            if box_height > max_box_side:
-                box_height = max_box_side
-            if box_width < min_box_side:
-                box_width = min_box_side
-            if box_width > max_box_side:
-                box_width = max_box_side
-            box_width = box_width.astype('uint32')
-            box_height = box_height.astype('uint32')
-            # расчет смещений боксов фиксированной конфигурации box_width, box_height по X и по Y c перекрытием
-            # overloapratio=alpha
-            step_x[area_i, ratio_i] = np.floor(box_width * (1 - alpha) / (1 + alpha))
-            step_y[area_i, ratio_i] = np.floor(box_height * (1 - alpha) / (1 + alpha))
-            X_barcode_h = np.floor(np.arange(delta, img_width - box_width - delta, step_x[area_i, ratio_i])).astype(
-                'uint32')
-            X_barcode_v = np.floor(np.arange(delta, img_width - box_height - delta, step_y[area_i, ratio_i])).astype(
-                "uint32")
-            Y_barcode_h = np.floor(np.arange(delta, img_height - box_height - delta, step_y[area_i, ratio_i])).astype(
-                "uint32")
-            Y_barcode_v = np.floor(np.arange(delta, img_height - box_width - delta, step_x[area_i, ratio_i])).astype(
-                "uint32")
-            XY_directions = [(X_barcode_h, Y_barcode_h, box_width, box_height, img_integral_sum_h),
-                             (X_barcode_v, Y_barcode_v, box_height, box_width, img_integral_sum_v)]
-            box_area_final = box_width * box_height
-            border_area = (box_width + 2 * delta) * (box_height + 2 * delta) - box_area_final
-            for X, Y, cur_box_width, cur_box_height, img_integral_sum in XY_directions:
-                for x in X:
-                    for y in Y:
-                        box = [y, x, cur_box_height, cur_box_width]
-                        box_sum = _image_region_sum(img_integral_sum, y, x, cur_box_height, cur_box_width)
-                        border_sum = _image_region_sum(img_integral_sum, y - delta, x - delta, cur_box_height + delta,
-                                                       cur_box_width + delta)
-                        border_sum -= box_sum
-                        if min_box_area < box_sum < max_box_area:  # ???!!!
-                            if box_sum / box_area_final > min_box_ratio and border_sum / border_area < max_border_ratio:
-                                # в боксе есть крупные объекты и вдоль границ бокса мало объектов
-                                score = [box_sum, box_sum / box_area_final, border_sum / border_area,
-                                         box_sum / box_area_final * (1 - border_sum / border_area)]
-                                scores.append(score)
-                                box.append(delta)
-                                boxes.append(box)
-                                boxes_count += 1
+    for conf_number, conf in enumerate(configurations):  # поиск по масштабу
+        # определение конфигурации бокса
+        # расчет смещений боксов фиксированной конфигурации box_width, box_height по X и по Y c перекрытием
+        # overloapratio=alpha
+        box_width, box_height = conf
+        step_x[conf_number] = np.floor(box_width * (1 - alpha) / (1 + alpha))
+        step_y[conf_number] = np.floor(box_height * (1 - alpha) / (1 + alpha))
+        X_barcode_h = np.floor(np.arange(delta, img_width - box_width - delta, step_x[conf_number])).astype(
+            'uint32')
+        X_barcode_v = np.floor(np.arange(delta, img_width - box_height - delta, step_y[conf_number])).astype(
+            "uint32")
+        Y_barcode_h = np.floor(np.arange(delta, img_height - box_height - delta, step_y[conf_number])).astype(
+            "uint32")
+        Y_barcode_v = np.floor(np.arange(delta, img_height - box_width - delta, step_x[conf_number])).astype(
+            "uint32")
+        XY_directions = [(X_barcode_h, Y_barcode_h, box_width, box_height, img_integral_sum_h),
+                         (X_barcode_v, Y_barcode_v, box_height, box_width, img_integral_sum_v)]
+        box_area_final = box_width * box_height
+        border_area = (box_width + 2 * delta) * (box_height + 2 * delta) - box_area_final
+        for X, Y, cur_box_width, cur_box_height, img_integral_sum in XY_directions:
+            for x in X:
+                for y in Y:
+                    box = [y, x, cur_box_height, cur_box_width]
+                    box_sum = _image_region_sum(img_integral_sum, y, x, cur_box_height, cur_box_width)
+                    border_sum = _image_region_sum(img_integral_sum, y - delta, x - delta, cur_box_height + delta,
+                                                   cur_box_width + delta)
+                    border_sum -= box_sum
+                    if min_box_area < box_sum < max_box_area:  # ???!!!
+                        if box_sum / box_area_final > min_box_ratio and border_sum / border_area < max_border_ratio:
+                            # в боксе есть крупные объекты и вдоль границ бокса мало объектов
+                            score = [box_sum, box_sum / box_area_final, border_sum / border_area,
+                                     box_sum / box_area_final * (1 - border_sum / border_area)]
+                            scores.append(score)
+                            box.append(delta)
+                            boxes.append(box)
+                            boxes_count += 1
     if boxes_count == 0:
         return None, None, 0
     else:
@@ -236,6 +249,20 @@ def edge_map(img, threshold, save_results=False, show_results=False, save_folder
                 plt.imshow(img, cmap=cmap)
                 plt.show()
     return grad_x_bin, grad_y_bin
+
+
+def mrglob(path: Path, *patterns):
+    return it.chain.from_iterable(path.rglob(pattern) for pattern in patterns)
+
+
+def get_barcodes_from_dir(dir: Path):
+    if not dir.is_dir():
+        raise Exception("Директория не существует")
+    patterns = ["*.jpeg", "*.jpg", "*.png", "*.bmp"]
+    paths = list(mrglob(dir, *patterns))
+    names = [path.stem for path in paths]
+    barcodes = [plt.imread(dir / path) for path in paths]
+    return barcodes, names
 
 # def test_walk(test_dir):
 #     for root, dirs, files in os.walk(test_dir):
