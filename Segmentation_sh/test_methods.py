@@ -1,3 +1,4 @@
+import functools
 import os
 from os import PathLike
 from pathlib import Path
@@ -5,9 +6,12 @@ from pathlib import Path
 import cv2 as cv
 import numpy as np
 from matplotlib import pyplot as plt
+from skimage import feature
 from skimage.transform import resize, rotate
+from sklearn.svm import LinearSVC
+from tqdm import tqdm
 
-from Segmentation_sh.utils import propose_regions, benchmark
+from Segmentation_sh.utils import propose_regions, benchmark, resize_img, make_horizontal, patch_from_box
 from Segmentation_sh.params_config import *
 
 
@@ -59,12 +63,13 @@ def find_barcode(img_path, show_test_results=False, save_test_results=True, save
     path_p = Path(img_path)
     result_dir = Path(save_folder) / path_p.stem
     scores, boxes, regions_number = propose_regions(img, threshold, alpha, min_box_area, max_box_area, min_sides_ratio,
-                                                    n_box_sides_steps, delta, min_box_ratio, max_border_ratio, rsort_key,
+                                                    n_box_sides_steps, delta, min_box_ratio, max_border_ratio,
+                                                    rsort_key,
                                                     save_test_results,
                                                     show_test_results, result_dir)
-    if boxes is not None:
+    if boxes is not None and (save_test_results or show_test_results):
         boxes = np.array([[box[0] - box[4], box[1] - box[4], box[2] + 2 * box[4], box[3] + 2 * box[4]] for box in
-                             boxes])
+                          boxes])
         for i, box in enumerate(boxes[:5]):
             y, x, height, width = box
             if i == 0:
@@ -85,6 +90,46 @@ def find_barcode(img_path, show_test_results=False, save_test_results=True, save
             plt.show()
         if save_test_results:
             plt.imsave(result_dir / "regions.jpg", img)
-    if save_test_results or show_test_results:
         print(f"Count of regions: {regions_number}")
+    if boxes is None:
+        return
 
+    X_train_filename = "X_train.npy"
+    y_train_filename = "y_train.npy"
+    X_train = np.load(X_train_filename)
+    y_train = np.load(y_train_filename)
+
+    model = LinearSVC(C=4.0, dual=False)
+    model.fit(X_train, y_train)
+    sample_size = (100, 150)
+
+    def get_patch(box):
+        return resize_img(make_horizontal(patch_from_box(img, box), sample_size), sample_size)
+
+    # preprocess = functools.reduce(lambda x, y : y(x), [make_horizontal,resize_img], initial_value)
+    test_patches = np.apply_along_axis(get_patch, 1, boxes)
+    assert test_patches.shape[1:-1] == sample_size
+
+    def apply_hog(patch):
+        return feature.hog(patch, channel_axis=2)
+
+    # X_test = np.array([feature.hog(patch,channel_axis=2) for patch in tqdm(test_patches)])
+    # X_test = np.apply_along_axis(apply_hog, (1, 2, 3), test_patches)
+    X_test=[]
+    for i in np.ndindex(test_patches.shape[0]):
+        X_test.append( apply_hog(test_patches[i]))
+    X_test=np.array(X_test)
+    # test = np.array([resize_img(make_horizontal(box, sample_size), sample_size) for box in boxes])
+    labels = model.predict(X_test)
+    # number of barcode detections from all the patches in the image
+    print(labels.sum())
+
+    fig, ax = plt.subplots()
+    ax.imshow(img)
+    ax.axis('off')
+
+    for y,x,height,width,border in boxes[labels == 1][0::10]:
+        ax.add_patch(plt.Rectangle((x-border, y-border), width+border, height+border, edgecolor='red',
+                                   alpha=0.3, lw=2, facecolor='none'))
+    fig.show()
+    print()

@@ -48,7 +48,8 @@ def get_boxes_configurations(min_box_area, max_box_area, n_box_side_steps, min_s
 
     # Организация начального поиска областей
     box_areas = np.arange(min_box_side, max_box_side + box_side_step, box_side_step) ** 2
-    box_ratios = np.arange(min_sides_ratio, 1 + min_sides_ratio, min_sides_ratio)
+    box_ratios = np.arange(min_sides_ratio, 0.98, min_sides_ratio)  # 0.98, чтобы одна из сторон
+    # всегда была меньше (нужно для правильной ориентации штрихкода в боксе штрихкода)
     configurations = []  # генерируемые расположения и конфигура
     for area_i, area in enumerate(box_areas):  # поиск по масштабу
         for ratio_i, ratio in enumerate(box_ratios):  # поиск по соотношению сторон бокса
@@ -257,7 +258,7 @@ def mrglob(path: Path, *patterns):
     return it.chain.from_iterable(path.rglob(pattern) for pattern in patterns)
 
 
-def get_files_from_dir(dir: Path,patterns, exclude = None):
+def get_files_from_dir(dir: Path, patterns, exclude=None):
     if not dir.is_dir():
         raise Exception("Директория не существует")
     paths = list(mrglob(dir, *patterns))
@@ -266,46 +267,41 @@ def get_files_from_dir(dir: Path,patterns, exclude = None):
     return paths
 
 
-def get_images_from_dir(dir:Path,exclude =None):
+def get_images_from_dir(dir: Path, exclude=None):
     patterns = ["*.jpeg", "*.jpg", "*.png", "*.bmp"]
-    paths = get_files_from_dir(dir,patterns,exclude)
+    paths = get_files_from_dir(dir, patterns, exclude)
     names = [path.stem for path in paths]
     images = [plt.imread(dir / path) for path in paths]
-    return images,names
+    return images, names
 
 
-def extract_patches(img, patch_sizes,count=None):
+def extract_patches(img, patch_sizes, count=None):
     patches = []
     for patch_size in patch_sizes:
-        patches.extend(image.extract_patches_2d(img,patch_size = patch_size,max_patches = count,random_state = 0))
+        patches.extend(image.extract_patches_2d(img, patch_size=patch_size, max_patches=count, random_state=0))
     return patches
 
 
 def is_horizontal(size):
-    return size[0]<size[1]
+    return size[0] < size[1]
 
 
 def make_horizontal(img, size):
     size_h = is_horizontal(size)
     img_h = is_horizontal(img.shape[0:2])
     if size_h != img_h:
-        img = img.transpose((1,0,2))
+        img = img.transpose((1, 0, 2))
     return img
 
 
 def resize_img(img, size):
-    return resize(img,size,anti_aliasing=True)
+    return resize(img, size, anti_aliasing=True)
 
 
-# def test_walk(test_dir):
-#     for root, dirs, files in os.walk(test_dir):
-#         print(root)
-#         for d in dirs:
-#             print(d)
-#         print("_____________________")
-#         for f in files:
-#             print(os.img_path.join(root,f))
-#         print("*********************")
+def patch_from_box(img, box, with_border=True):
+    y, x, height, width,border = box
+    offset = border if with_border else 0
+    return img[y-offset:y+height+offset,x-offset:x+width+offset]
 
 
 # def my_overlopratio(boxA,boxB):
