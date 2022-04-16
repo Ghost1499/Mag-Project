@@ -1,29 +1,12 @@
-import os
-import time
 from pathlib import Path
 from typing import Tuple, Optional
-import itertools as it
 
 import cv2
 import numpy as np
+import typing
 from matplotlib import pyplot as plt
-from scipy import ndimage
-from skimage import feature
-from skimage.transform import resize
-from sklearn.feature_extraction import image
 
 rsort_keys = {"area": 0, "sum_area_ratio": 1, "border_sum_area_ratio": 2, "box_border_ratio": 3}
-
-
-def benchmark(func):
-    def wrapper(*args, **kwargs):
-        start = time.time()
-        res = func(*args, **kwargs)
-        end = time.time()
-        print('[*] Время выполнения: {} секунд.'.format(end - start))
-        return res
-
-    return wrapper
 
 
 def _image_region_sum(integral, y, x, height, width):
@@ -71,11 +54,11 @@ def get_boxes_configurations(min_box_area, max_box_area, n_box_side_steps, min_s
     return configurations
 
 
-def propose_regions(img: np.ndarray, threshold: int, alpha: float, min_box_area: int, max_box_area: int,
-                    min_sides_ratio: float, n_box_side_steps: int, delta: int, min_box_ratio: float,
-                    max_border_ratio: float, rsort_key: str,
-                    save_results: bool, show_results: bool, save_folder: Path) \
-        -> Tuple[Optional[np.ndarray], Optional[np.ndarray], int]:
+def propose_regions(img: np.ndarray, threshold: int, configurations: typing.List, alpha: float, min_box_area: int,
+                    max_box_area: int,
+                    delta: int, min_box_ratio: float,
+                    max_border_ratio: float, rsort_key: str) -> Tuple[
+    Optional[np.ndarray], Optional[np.ndarray], int,Optional[typing.List]]:
     """
     :param img: изображение
     :param threshold: порог для бинаризации внутри edge_boxes
@@ -105,32 +88,31 @@ def propose_regions(img: np.ndarray, threshold: int, alpha: float, min_box_area:
     if alpha < 0 or alpha >= 1:
         raise ValueError(f"Параметр alpha={alpha} находится вне допустимого диапазона", alpha)
 
+    validation_data = []
     img_width = img.shape[1]
     img_height = img.shape[0]
     # параметры поиска областей
 
     img = img.astype('uint8')
-    img_prepared_barcode_h, img_prepared_barcode_v = edge_map(img, threshold, save_results, show_results,
-                                                              save_folder)  # контурный анализ и обработка изображений
+    edge_map_x, edge_map_y,cur_valid_data = edge_map(img, threshold)  # контурный анализ и обработка изображений
+    if cur_valid_data:
+        validation_data.extend(cur_valid_data)
 
-    img_prepared_float_scaled_h = img_prepared_barcode_h / 255
-    img_prepared_float_scaled_v = img_prepared_barcode_v / 255
-    img_integral_sum_h, _, _ = cv2.integral3(img_prepared_float_scaled_h)
-    img_integral_sum_v, _, _ = cv2.integral3(img_prepared_float_scaled_v)
-    plt.imsave(save_folder / "img_integral_sum_h.jpg", img_integral_sum_h)
-    plt.imsave(save_folder / "img_integral_sum_v.jpg", img_integral_sum_v)
+    edge_map_x = edge_map_x / 255
+    edge_map_y = edge_map_y / 255
+    integral_edge_map_x, _, _ = cv2.integral3(edge_map_x)
+    integral_edge_map_y, _, _ = cv2.integral3(edge_map_y)
+    validation_data.append((integral_edge_map_x, "integral edge map x", None))
+    validation_data.append((integral_edge_map_x, "integral edge map y", None))
     # Организация начального поиска областей
-    configurations = get_boxes_configurations(min_box_area, max_box_area, n_box_side_steps, min_sides_ratio)
     boxes_count = 0
     step_x = np.zeros(len(configurations), np.float32)
     step_y = np.zeros(len(configurations), np.float32)
     boxes = []  # генерируемые расположения и конфигурации
     scores = []
-    for conf_number, conf in enumerate(configurations):  # поиск по масштабу
-        # определение конфигурации бокса
+    for conf_number, (box_width, box_height) in enumerate(configurations):  # поиск по масштабу
         # расчет смещений боксов фиксированной конфигурации box_width, box_height по X и по Y c перекрытием
         # overloapratio=alpha
-        box_width, box_height = conf
         step_x[conf_number] = np.floor(box_width * (1 - alpha) / (1 + alpha))
         step_y[conf_number] = np.floor(box_height * (1 - alpha) / (1 + alpha))
         X_barcode_h = np.floor(np.arange(delta, img_width - box_width - delta, step_x[conf_number])).astype(
@@ -141,8 +123,8 @@ def propose_regions(img: np.ndarray, threshold: int, alpha: float, min_box_area:
             "uint32")
         Y_barcode_v = np.floor(np.arange(delta, img_height - box_width - delta, step_x[conf_number])).astype(
             "uint32")
-        XY_directions = [(X_barcode_h, Y_barcode_h, box_width, box_height, img_integral_sum_h),
-                         (X_barcode_v, Y_barcode_v, box_height, box_width, img_integral_sum_v)]
+        XY_directions = [(X_barcode_h, Y_barcode_h, box_width, box_height, integral_edge_map_x),
+                         (X_barcode_v, Y_barcode_v, box_height, box_width, integral_edge_map_y)]
         box_area_final = box_width * box_height
         border_area = (box_width + 2 * delta) * (box_height + 2 * delta) - box_area_final
         for X, Y, cur_box_width, cur_box_height, img_integral_sum in XY_directions:
@@ -153,7 +135,7 @@ def propose_regions(img: np.ndarray, threshold: int, alpha: float, min_box_area:
                     border_sum = _image_region_sum(img_integral_sum, y - delta, x - delta, cur_box_height + delta,
                                                    cur_box_width + delta)
                     border_sum -= box_sum
-                    if min_box_area < box_sum < max_box_area:  # ???!!!
+                    if min_box_area < box_area_final < max_box_area:  # ???!!!
                         if box_sum / box_area_final > min_box_ratio and border_sum / border_area < max_border_ratio:
                             # в боксе есть крупные объекты и вдоль границ бокса мало объектов
                             score = [box_sum, box_sum / box_area_final, border_sum / border_area,
@@ -163,22 +145,24 @@ def propose_regions(img: np.ndarray, threshold: int, alpha: float, min_box_area:
                             boxes.append(box)
                             boxes_count += 1
     if boxes_count == 0:
-        return None, None, 0
+        result = None, None, boxes_count,validation_data
     else:
         boxes = np.array(boxes, np.uint32)
         scores = np.array(scores)
-        indexes_sorted = np.argsort(
-            -scores[:,
-             rsort_keys[rsort_key]])  # сортировка в порядке убывания соотношения box_sum / box_area_final * (1 -
+        indexes_sorted = np.argsort(-scores[:,rsort_keys[rsort_key]])
+        # сортировка в порядке убывания соотношения box_sum / box_area_final * (1 -
         # border_sum / border_area)
         scores_selected = scores[indexes_sorted, :]
         boxes_selected = boxes[indexes_sorted, :]
-        return scores_selected, boxes_selected, boxes_count
+        result = scores_selected, boxes_selected, boxes_count,validation_data
+    return result
 
 
-def edge_map(img, threshold, save_results=False, show_results=False, save_folder=None):
-    # img=img
+def edge_map(img, threshold):
+    validation_data = []
+    cmap = "gray"
     img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    validation_data.append((img_gray, 'gray', cmap))
 
     grad_x = cv2.Sobel(img_gray, ddepth=cv2.CV_64F, dx=1, dy=0, ksize=3)
     grad_x = np.absolute(grad_x)
@@ -189,6 +173,11 @@ def edge_map(img, threshold, save_results=False, show_results=False, save_folder
     grad_y = np.absolute(grad_y)
     kernel_recthv = np.transpose(kernel_recth, axes=(1, 0))
     grad_y_closed_rect = cv2.morphologyEx(grad_y, cv2.MORPH_CLOSE, kernel_recthv)
+
+    validation_data.append((grad_x, 'grad x', cmap))
+    validation_data.append((grad_y, 'grad y', cmap))
+    validation_data.append((grad_x_closed_rect, "grad x closed by rectangle 2x16", cmap))
+    validation_data.append((grad_y_closed_rect, "grad y closed by rectangle 16x2", cmap))
 
     # grad_subtract = cv2.subtract(grad_x, grad_y)  # вычитание градиентов
     # grad_subtract = np.absolute(grad_subtract)
@@ -202,150 +191,78 @@ def edge_map(img, threshold, save_results=False, show_results=False, save_folder
     kernel_square = cv2.getStructuringElement(cv2.MORPH_RECT, (8, 8))
     grad_x_opened_square = cv2.morphologyEx(grad_x_closed_rect, cv2.MORPH_OPEN, kernel_square)
     grad_y_opened_square = cv2.morphologyEx(grad_y_closed_rect, cv2.MORPH_OPEN, kernel_square)
+    validation_data.append((grad_x_opened_square, "grad x opening square 8x8", cmap))
+    validation_data.append((grad_y_opened_square, "grad y opening square 8x8", cmap))
+
     # grad_x_opened_square = cv2.erode(grad_x_opened_square, None, iterations=4)
     # grad_x_opened_square = cv2.dilate(grad_x_opened_square, None, iterations=4)
 
-    # !!!!!!!!!!!!!!!! пофиксить нормировку (после открытия поднимается изображение "поднимается")
-    # grad_x_opened_square = grad_x_opened_square / (2^64) * 255
-    # grad_x_opened_square = grad_x_opened_square.astype("uint8")
-
-    # grad_y_opened_square = grad_y_opened_square / (2^64) * 255
-    # grad_y_opened_square = grad_y_opened_square.astype("uint8")
-
     (_, grad_x_bin) = cv2.threshold(grad_x_opened_square, threshold, 255, cv2.THRESH_BINARY)
     (_, grad_y_bin) = cv2.threshold(grad_y_opened_square, threshold, 255, cv2.THRESH_BINARY)
+    validation_data.append((grad_x_bin, "grad x binary", cmap))
+    validation_data.append((grad_y_bin, "grad y binary", cmap))
 
-    if save_results or show_results:
-        imgs = [img_gray,
-                grad_x, grad_y,
-                grad_x_closed_rect, grad_y_closed_rect,
-                grad_x_opened_square, grad_y_opened_square,
-                grad_x_bin, grad_y_bin]
-        names = ["gray",
-                 "grad x", 'grad y',  # "grad subtract", "grad subtract binary",
-                 "grad x closed by rectangle 2x16", "grad x closed by rectangle 16x2",
-                 "grad x opening square 8x8", "grad y opening square 8x8",
-                 "grad x binary", "grad y binary"]
-
-        assert len(imgs) == len(names), "Длина списка тестовых изображений не равна длине списка имен тестовых " \
-                                        "изображений"
-        cmap = "gray"
-        if save_results:
-            if not save_folder:
-                raise Exception("Папка для сохранения результатов не задана")
-            save_folder = Path(save_folder)
-
-        for i, img, name in zip(range(len(imgs)), imgs, names):
-            if save_results:
-                fmt = 'jpg'
-                path = save_folder / '.'.join([str(i + 1) + "." + name, fmt])
-                # os.img_path.join(save_folder, '.'.join([name, fmt]))
-                if not save_folder.is_dir():
-                    save_folder.mkdir(parents=True)
-                # if not os.img_path.isdir(save_folder):
-                #     raise Exception(f"Папки для сохранения результатов с именем {save_folder} не существует")
-                plt.imsave(path, img, cmap=cmap)
-            if show_results:
-                dpi = 300
-                plt.figure(i, dpi=dpi)
-                plt.title(name)
-                plt.imshow(img, cmap=cmap)
-                plt.show()
-    return grad_x_bin, grad_y_bin
+    return grad_x_bin, grad_y_bin, validation_data
 
 
-def mrglob(path: Path, *patterns):
-    return it.chain.from_iterable(path.rglob(pattern) for pattern in patterns)
+def append_border(boxes: typing.Union[np.ndarray, typing.List]) -> np.ndarray:
+    """
+    :type boxes: typing.Union[np.ndarray, typing.List]
+    :rtype: np.ndarray
+    Прибавляет к боксу рамку и убирает её из списка значений кортежа
+    """
+    boxes_plus_border = np.empty((boxes.shape[0],boxes.shape[1]-1),np.int32)
+    for i, (y, x, height, width, border) in enumerate(boxes):
+        boxes_plus_border[i] = (y - border, x - border, height + border, width + border)
+    return boxes_plus_border
 
 
-def get_files_from_dir(dir: Path, patterns, exclude=None):
-    if not dir.is_dir():
-        raise Exception("Директория не существует")
-    paths = list(mrglob(dir, *patterns))
-    if exclude:
-        paths = [path for path in paths if path.stem not in exclude]
-    return paths
+def my_overlopratio(boxA, boxB):
+    #   Определение матрицы мер попарного пересечения боксов
+    # На входе совокупность боксов с координатами вершин длинами сторон
+    # left top corner
+    x1boxA = boxA[:, 0]
+    y1boxA = boxA[:, 1]
+    x1boxB = boxB[:, 0]
+    y1boxB = boxB[:, 1]
+    # right bottom corner
+    x2boxA = x1boxA + boxA[:, 2]
+    y2boxA = y1boxA + boxA[:, 3]
+    x2boxB = x1boxB + boxB[:, 2]
+    y2boxB = y1boxB + boxB[:, 3]
 
+    # area of the bounding box
+    areaA = np.multiply(boxA[:, 2], boxA[:, 3])
+    areaB = np.multiply(boxB[:, 2], boxB[:, 3])
 
-def get_images_from_dir(dir: Path, exclude=None):
-    patterns = ["*.jpeg", "*.jpg", "*.png", "*.bmp"]
-    paths = get_files_from_dir(dir, patterns, exclude)
-    names = [path.stem for path in paths]
-    images = [plt.imread(dir / path) for path in paths]
-    return images, names
-
-
-def extract_patches(img, patch_sizes, count=None):
-    patches = []
-    for patch_size in patch_sizes:
-        patches.extend(image.extract_patches_2d(img, patch_size=patch_size, max_patches=count, random_state=0))
-    return patches
-
-
-def is_horizontal(size):
-    return size[0] < size[1]
-
-
-def make_horizontal(img, size):
-    size_h = is_horizontal(size)
-    img_h = is_horizontal(img.shape[0:2])
-    if size_h != img_h:
-        img = img.transpose((1, 0, 2))
-    return img
-
-
-def resize_img(img, size):
-    return resize(img, size, anti_aliasing=True)
-
-
-def patch_from_box(img, box, with_border=True):
-    y, x, height, width,border = box
-    offset = border if with_border else 0
-    return img[y-offset:y+height+offset,x-offset:x+width+offset]
-
-
-# def my_overlopratio(boxA,boxB):
-# #   Определение матрицы мер попарного пересечения боксов
-# #На входе совокупность боксов с координатами вершин длинами сторон
-#     # left top corner
-#     x1boxA = boxA[:,0];    y1boxA = boxA[:,1];
-#     x1boxB = boxB[:,0];    y1boxB = boxB[:,1];
-#     #right bottom corner
-#     x2boxA = x1boxA + boxA[:, 2];    y2boxA = y1boxA + boxA[:, 3]; 
-#     x2boxB = x1boxB + boxB[:, 2];    y2boxB = y1boxB + boxB[:, 3];
-
-#     #area of the bounding box
-#     areaA = np.multiply(boxA[:, 2], boxA[:, 3])
-#     areaB = np.multiply(boxB[:, 2], boxB[:, 3])
-
-#     iou = np.zeros((boxA.shape[0],boxB.shape[0]),np.float32);
-#     if boxA.shape[0]!=0:
-#         if boxB.shape[0]!=0:
-#             for m in range(boxA.shape[0]):
-#                 for n in range(boxB.shape[0]):
-#                     # print(n)
-#                     # print(m)
-#                     #compute the corners of the intersect
-#                     x1 = np.maximum(x1boxA[m], x1boxB[n])
-#                     y1 = np.maximum(y1boxA[m], y1boxB[n])
-#                     x2 = np.minimum(x2boxA[m], x2boxB[n])
-#                     y2 = np.minimum(y2boxA[m], y2boxB[n])
-#                     #пропуск, если нет пресечения
-#                     w = x2 - x1
-#                     h = y2 - y1
-#                     if w > 0 and h > 0:
-#                         intersectAB = w * h
-#                         r= intersectAB/(areaA[m]+areaB[n]-intersectAB)
-#                         iou[m,n]=r
-#                     else:
-#                         iou[m,n]=0
-#     return iou
-# #Пример 
-# boxA=np.zeros((2,4),np.float32)  
-# boxB=np.zeros((2,4),np.float32) 
+    iou = np.zeros((boxA.shape[0], boxB.shape[0]), np.float32)
+    if boxA.shape[0] != 0:
+        if boxB.shape[0] != 0:
+            for m in range(boxA.shape[0]):
+                for n in range(boxB.shape[0]):
+                    # print(n)
+                    # print(m)
+                    # compute the corners of the intersect
+                    x1 = np.maximum(x1boxA[m], x1boxB[n])
+                    y1 = np.maximum(y1boxA[m], y1boxB[n])
+                    x2 = np.minimum(x2boxA[m], x2boxB[n])
+                    y2 = np.minimum(y2boxA[m], y2boxB[n])
+                    # пропуск, если нет пресечения
+                    w = x2 - x1
+                    h = y2 - y1
+                    if w > 0 and h > 0:
+                        intersectAB = w * h
+                        r = intersectAB / (areaA[m] + areaB[n] - intersectAB)
+                        iou[m, n] = r
+                    else:
+                        iou[m, n] = 0
+    return iou
+# #Пример
+# boxA=np.zeros((2,4),np.float32)
+# boxB=np.zeros((2,4),np.float32)
 # boxA[0,0]=1;   boxA[0,1]=1; boxA[0,2]=10;   boxA[0,3]=10;
-# boxB[0,0]=1;   boxB[0,1]=1; boxB[0,2]=10;   boxB[0,3]=10;        
+# boxB[0,0]=1;   boxB[0,1]=1; boxB[0,2]=10;   boxB[0,3]=10;
 
 # boxA[1,0]=2;   boxA[1,1]=2; boxA[1,2]=10;   boxA[1,3]=10;
-# boxB[1,0]=3;   boxB[1,1]=4; boxB[1,2]=22;   boxB[1,3]=22; 
+# boxB[1,0]=3;   boxB[1,1]=4; boxB[1,2]=22;   boxB[1,3]=22;
 # iou=my_overlopratio(boxA,boxB)

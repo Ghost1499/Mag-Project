@@ -1,17 +1,16 @@
-import functools
 import os
-from os import PathLike
 from pathlib import Path
+from typing import Union
 
-import cv2 as cv
 import numpy as np
 from matplotlib import pyplot as plt
 from skimage import feature
-from skimage.transform import resize, rotate
+from skimage.transform import resize
 from sklearn.svm import LinearSVC
-from tqdm import tqdm
 
-from Segmentation_sh.utils import propose_regions, benchmark, resize_img, make_horizontal, patch_from_box
+from Segmentation_sh.modules.validation import draw_regions, save_validation_data, show_validation_data
+from Segmentation_sh.modules.utils import benchmark, resize_img, match_orientation, patch_from_box
+from Segmentation_sh.modules.regions import propose_regions, get_boxes_configurations
 from Segmentation_sh.params_config import *
 
 
@@ -39,20 +38,17 @@ def test_from_dir(test_dir: [str, Path], result_dir: [str, Path]):
 
 
 @benchmark
-def find_barcode(img_path, show_test_results=False, save_test_results=True, save_folder="results"):
+def find_barcode(img_path:Union[str,Path], show_valid_data=False, save_valid_data=True, save_folder="results"):
+    validation_data = []
+    if type(img_path) is not Path:
+        img_path = Path(img_path)
+    result_dir = Path(save_folder) / img_path.stem
+
     img = plt.imread(img_path)
+    validation_data.append((img,'source',None))
+
     expected_size = 964, 1292
-
-    def is_horizontal(size):
-        return size[0] < size[1]
-
-    if is_horizontal(expected_size) != is_horizontal(img.shape[:2]):
-        img = img.transpose(1, 0, 2)
-        # img = rotate(img,90,resize=True)
-
-        # rows,cols = img.shape[:2]
-        # m = cv.getRotationMatrix2D(((cols - 1) / 2.0, (rows - 1) / 2.0), 90, 1)
-        # img = cv.warpAffine(img, m, (cols, rows))
+    img = match_orientation(img,expected_size)
     if img.shape[:2] != expected_size:
         img = resize(img, expected_size, anti_aliasing=True)
     mean = np.mean(img)
@@ -60,39 +56,54 @@ def find_barcode(img_path, show_test_results=False, save_test_results=True, save
         img = img * 255
     img = img.astype("uint8")
 
-    path_p = Path(img_path)
-    result_dir = Path(save_folder) / path_p.stem
-    scores, boxes, regions_number = propose_regions(img, threshold, alpha, min_box_area, max_box_area, min_sides_ratio,
-                                                    n_box_sides_steps, delta, min_box_ratio, max_border_ratio,
-                                                    rsort_key,
-                                                    save_test_results,
-                                                    show_test_results, result_dir)
-    if boxes is not None and (save_test_results or show_test_results):
-        boxes = np.array([[box[0] - box[4], box[1] - box[4], box[2] + 2 * box[4], box[3] + 2 * box[4]] for box in
-                          boxes])
-        for i, box in enumerate(boxes[:5]):
-            y, x, height, width = box
-            if i == 0:
-                color = (0, 255, 0)
-                thickness = 3
-            else:
-                color = (0, 0, 255)
-                thickness = 1
-            cv.rectangle(img, (x, y), (x + width, y + height), color, thickness)
-
-        for i, box in enumerate(boxes[np.arange(boxes.shape[0] // 10, boxes.shape[0], boxes.shape[0] // 10)]):
-            y, x, height, width = box
-            color = (255, 0, 0)
-            cv.rectangle(img, (x, y), (x + width, y + height), color, 1)
-        if show_test_results:
-            plt.figure(0, dpi=300)
-            plt.imshow(img)
-            plt.show()
-        if save_test_results:
-            plt.imsave(result_dir / "regions.jpg", img)
-        print(f"Count of regions: {regions_number}")
+    configs = get_boxes_configurations(min_box_area, max_box_area, n_box_sides_steps, min_sides_ratio)
+    scores, boxes, regions_number,cur_v_data = propose_regions(img, threshold,configs, alpha, min_box_area, max_box_area,delta, min_box_ratio, max_border_ratio,
+                                                    rsort_key)
+    if cur_v_data:
+        validation_data.extend(cur_v_data)
     if boxes is None:
         return
+
+    regions = draw_regions(img,boxes)
+    validation_data.append((regions,"regions",None))
+    print(f"Count of regions: {regions_number}")
+
+    #     barcodes, barcodes_names = get_images_from_dir(Path("C:/Users/zgstv/OneDrive/Изображения/barcodes_full"))
+    #     images, imgs_names = get_images_from_dir(Path("C:/Users/zgstv/OneDrive/Изображения/vend_machines"), barcodes_names)
+    #     configs = get_boxes_configurations(min_box_area, max_box_area, n_box_sides_steps, min_sides_ratio)
+    #     patch_sizes = configs + [(height, width) for width, height in configs]
+    #     count_patches = 10
+    #     negative_patches = []
+    #     negative_patches.extend(
+    #         it.chain.from_iterable((extract_patches(img, patch_sizes, count_patches) for img in images)))
+    #
+    #     # провести аугментацию штрихкодов ( поворот по вертикали, горизонтали, и так, и так; поворот на несколько
+    #     # градусов по часовой и против часовой
+    #     sample_size = (100, 150)
+    #     positive = np.array([resize_img(make_horizontal(barcode, sample_size), sample_size) for barcode in barcodes])
+    #     negative = np.array([resize_img(make_horizontal(patch, sample_size), sample_size) for patch in negative_patches])
+    #     assert positive.shape[1:] == negative.shape[1:]
+    #     np.save("positive",positive)
+    #     np.save("negative",negative)
+    #
+    # X_train = np.array([feature.hog(im,multichannel=True)
+    #                     for im in tqdm(it.chain(positive,
+    #                                             negative))])
+    #
+    # y_train = np.zeros(X_train.shape[0])
+    # y_train[:positive.shape[0]] = 1
+
+    # grid = GridSearchCV(LinearSVC(dual=False), {'C': [1.0, 2.0, 4.0, 8.0]}, cv=3)
+    # grid.fit(X_train, y_train)
+    # print(grid.best_score_)
+    # model = grid.best_estimator_
+    # X_train_filename = "X_train.npy"
+    # y_train_filename = "y_train.npy"
+    # X_train = np.load(X_train_filename)
+    # y_train = np.load(y_train_filename)
+    #
+    # model = LinearSVC(C=4.0, dual=False)
+    # model.fit(X_train, y_train)
 
     X_train_filename = "X_train.npy"
     y_train_filename = "y_train.npy"
@@ -104,9 +115,8 @@ def find_barcode(img_path, show_test_results=False, save_test_results=True, save
     sample_size = (100, 150)
 
     def get_patch(box):
-        return resize_img(make_horizontal(patch_from_box(img, box), sample_size), sample_size)
+        return resize_img(match_orientation(patch_from_box(img, box), sample_size), sample_size)
 
-    # preprocess = functools.reduce(lambda x, y : y(x), [make_horizontal,resize_img], initial_value)
     test_patches = np.apply_along_axis(get_patch, 1, boxes)
     assert test_patches.shape[1:-1] == sample_size
 
@@ -119,17 +129,15 @@ def find_barcode(img_path, show_test_results=False, save_test_results=True, save
     for i in np.ndindex(test_patches.shape[0]):
         X_test.append( apply_hog(test_patches[i]))
     X_test=np.array(X_test)
-    # test = np.array([resize_img(make_horizontal(box, sample_size), sample_size) for box in boxes])
     labels = model.predict(X_test)
     # number of barcode detections from all the patches in the image
     print(labels.sum())
 
-    fig, ax = plt.subplots()
-    ax.imshow(img)
-    ax.axis('off')
+    result_regions = draw_regions(img,boxes[labels==1],draw_all=True,fill_rect=True)
+    validation_data.append((result_regions,"result regions",None))
 
-    for y,x,height,width,border in boxes[labels == 1][0::10]:
-        ax.add_patch(plt.Rectangle((x-border, y-border), width+border, height+border, edgecolor='red',
-                                   alpha=0.3, lw=2, facecolor='none'))
-    fig.show()
+    if save_valid_data:
+        save_validation_data(validation_data,save_folder)
+    if show_valid_data:
+        show_validation_data(validation_data)
     print()

@@ -1,17 +1,4 @@
-import itertools as it
-import os
-from pathlib import Path
-
-import numpy as np
-from skimage import feature
-from tqdm import tqdm
-from sklearn.svm import LinearSVC
-from sklearn.model_selection import GridSearchCV
-
-from Segmentation_sh.test_methods import test_from_dir, find_barcode
-from Segmentation_sh.utils import get_files_from_dir, get_boxes_configurations, get_images_from_dir, extract_patches, \
-    make_horizontal, resize_img, benchmark
-from Segmentation_sh.params_config import *
+from Segmentation_sh.test_methods import find_barcode
 
 
 # @benchmark
@@ -23,7 +10,7 @@ def main():
     # result_dir = os.path.abspath("results/binary_img/v2")
     # result_dir = os.path.abspath("results/test")
     # test_from_dir(test_dir, result_dir)
-    find_barcode("test_data/2021-10-20_13_32_07_783.png",save_test_results=False)
+    find_barcode("test_data/2021-10-20_13_32_07_783.png")
 
 
     # load = True

@@ -1,14 +1,9 @@
 # Импорт всех необходимых компонентов и утилит
-import numpy as np
 import cv2
-import os
-from cv2 import createCLAHE
 import numpy as np
-import random
 from matplotlib import pyplot as plt
-from scipy import ndimage
-from skimage import feature, morphology
-from Segmentation_sh.utils import propose_regions, test_model
+from Segmentation_sh.modules.utils import test_model
+from Segmentation_sh.modules.regions import propose_regions
 
 # from google.colab.patches import cv2_imshow
 filename = "test_data\\2021-10-20_13_32_07_783.png"
