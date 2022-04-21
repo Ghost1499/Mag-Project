@@ -20,7 +20,7 @@ from Segmentation_sh.modules.preprocess import match_orientation, prepare_patch,
 from Segmentation_sh.modules.extract import extract_negative_samples, get_patches_from_boxes, get_test_data
 from Segmentation_sh.modules.read import get_images_from_dir
 from Segmentation_sh.modules.regions import get_boxes_configurations, propose_regions
-from Segmentation_sh.modules.third import save_barcode, display
+from Segmentation_sh.modules.barcode_decode import read_barcode, save
 from Segmentation_sh.modules.utils import benchmark, walk_dir
 from Segmentation_sh.modules.validation import draw_regions, save_validation_data, show_validation_data
 from Segmentation_sh.params_config import min_box_area, max_box_area, n_box_sides_steps, min_sides_ratio, threshold, \
@@ -29,8 +29,8 @@ from Segmentation_sh.params_config import min_box_area, max_box_area, n_box_side
 
 
 def main():
-    test_dir = os.path.normpath("C:/Users/zgstv/OneDrive/Изображения/vend_machines")
-    # test_dir = os.path.normpath("C:/Users/zgstv/OneDrive/Изображения/vend_machines2")
+    # test_dir = os.path.normpath("C:/Users/zgstv/OneDrive/Изображения/vend_machines")
+    test_dir = os.path.normpath("C:/Users/zgstv/OneDrive/Изображения/vend_machines2")
     # test_dir = os.path.abspath("test_data")
     # result_dir = os.path.abspath("results/binary_img/v")
     # result_dir = os.path.abspath("results/binary_img/v2")
@@ -38,10 +38,10 @@ def main():
     # result_dir = os.path.abspath("data/train_data")
     result_dir = os.path.abspath("data/barcodes2")
     # test_from_dir(test_dir, result_dir)
-    # walk_dir(test_dir,result_dir,save_barcode)
+    walk_dir(test_dir,result_dir,read_barcode)
     # find_barcode("data/test/2021-10-20_13_32_07_783.png",valid_data_path)#,load_img_data=False,load_train_data=False)
     # project_barcode()
-    find_lines()
+    # find_lines()
     # with np.load(str(train_data_path) + ".npz") as train_data:
     #     X_train = train_data['X_train']
     #     y_train = train_data['y_train']
@@ -79,7 +79,7 @@ def project_barcode():
     ret,bin = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
     plt.imshow(bin,cmap='gray')
     plt.show()
-    display(bin, pyzbar.decode(bin),None)
+    save(bin, pyzbar.decode(bin), None)
 
 
 def find_lines():
