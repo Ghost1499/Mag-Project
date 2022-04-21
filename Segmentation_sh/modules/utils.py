@@ -1,7 +1,6 @@
+import os
 import time
-
-from skimage.transform import resize
-from sklearn.feature_extraction import image
+from pathlib import Path
 
 
 def benchmark(func):
@@ -14,33 +13,35 @@ def benchmark(func):
     return wrapper
 
 
-def extract_patches(img, patch_sizes, count=None):
-    patches = []
-    for patch_size in patch_sizes:
-        patches.extend(image.extract_patches_2d(img, patch_size=patch_size, max_patches=count, random_state=0))
-    return patches
-
-
 def is_horizontal(size):
     return size[0] < size[1]
 
 
-def match_orientation(img, size):
-    size_h = is_horizontal(size)
-    img_h = is_horizontal(img.shape[0:2])
-    if size_h != img_h:
-        img = img.transpose((1, 0, 2))
-    return img
+def walk_dir(test_dir: [str, Path], result_dir: [str, Path], func, fargs=(), fkwargs=None):
+    if fkwargs is None:
+        fkwargs={}
+    if type(test_dir) == str:
+        test_dir = Path(test_dir)
+    if type(result_dir) == str:
+        result_dir = Path(result_dir)
+    if not test_dir.is_dir():
+        raise Exception("Тестовая директория не существует")
+    if not callable(func):
+        raise ValueError(f"Аргумент {func} не является вызываемым")
+    # if not os.listdir(test_dir):
+    #     raise Exception("Тестовая директория пустая")
+    if not result_dir.is_dir():
+        result_dir.mkdir(parents=True)
+    for root, dirs, files in os.walk(str(test_dir)):
+        for file in files:
+            path = Path(os.path.join(root, file))
+            ext = path.suffix
+            possible_exts = ".jpg", ".jpeg", ".png", ".bmp"
+            if ext in possible_exts:
+                cur_res_dir = Path(root).relative_to(test_dir)
+                # if str(cur_res_dir) == "Background" or str(cur_res_dir) == "Aluminum can":
+                #     continue
+                save_dir = result_dir / cur_res_dir
+                func(path, save_dir, *fargs, **fkwargs)
 
-
-def resize_img(img, size):
-    return resize(img, size, anti_aliasing=True)
-
-
-def patch_from_box(img, box, with_border=True):
-    y, x, height, width,border = box
-    offset = border if with_border else 0
-    return img[y-offset:y+height+offset,x-offset:x+width+offset]
-
-
-
+                # find_barcode(path, valid_res_path=save_dir)

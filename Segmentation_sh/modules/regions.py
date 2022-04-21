@@ -73,7 +73,7 @@ def propose_regions(img: np.ndarray, threshold: int, configurations: typing.List
     :param rsort_key: атрибут, по которому сортируется массив результатов
     :param save_results: сохранять промежуточные изображения-результаты в файл (папка results)
     :param show_results: показывать промежуточные изображения-результаты
-    :param save_folder: папка для сохранения промежуточных результов
+    :param valid_res_path: папка для сохранения промежуточных результов
     :return: vscore_select, boxes_select, boxes_count
 
     Формирование предложений по областям интереса using a variant of the Edge Boxes algorithm.
