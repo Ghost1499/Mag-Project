@@ -1,2 +1,2 @@
-# Mag Progect
+# Mag Project
  
