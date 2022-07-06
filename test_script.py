@@ -2,34 +2,31 @@ import itertools as it
 import json
 import os
 from pathlib import Path
-from joblib import dump, load
 # from pickle import load
 from typing import Union
 
 import cv2
 import numpy as np
 import pyzbar.pyzbar as pyzbar
+from joblib import load
 from matplotlib import pyplot as plt
 from skimage import transform
-from skimage.transform import resize
 from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_score, make_scorer
-from sklearn.model_selection import train_test_split, cross_val_score, cross_validate
+from sklearn.model_selection import train_test_split, cross_validate
 from sklearn.svm import LinearSVC
 from tqdm import tqdm
 
-from Barcode_detection.modules.model import get_best_model, plot_training_curve
-from Barcode_detection.modules.preprocess import match_orientation, prepare_patch, apply_hog, \
+from modules.barcode_decode import save
+from modules.extract import get_test_data
+from modules.preprocess import prepare_patch, apply_hog, \
     augment_barcode, prepare_image, patch_from_box
-from Barcode_detection.modules.extract import extract_negative_samples, get_patches_from_boxes, get_test_data
-from Barcode_detection.modules.read import get_images_from_dir, get_files_from_dir
-from Barcode_detection.modules.regions import get_boxes_configurations, propose_regions
-from Barcode_detection.modules.barcode_decode import read_barcode, save
-from Barcode_detection.modules.utils import benchmark, walk_dir
-from Barcode_detection.modules.validation import draw_regions, save_validation_data, show_validation_data, \
-    make_learning_curve
-from Barcode_detection.params_config import min_box_area, max_box_area, n_box_sides_steps, min_sides_ratio, threshold, \
-    alpha, delta, min_box_ratio, max_border_ratio, rsort_key, img_data_path, barcodes_path, bottles_imgs_path, \
-    sample_size, train_data_path, valid_data_path, random_state, negative_samples_dir,data_path
+from modules.read import get_images_from_dir, get_files_from_dir
+from modules.regions import get_boxes_configurations, propose_regions
+from modules.utils import benchmark
+from modules.validation import draw_regions, save_validation_data, show_validation_data
+from params_config import min_box_area, max_box_area, n_box_sides_steps, min_sides_ratio, threshold, \
+    alpha, delta, min_box_ratio, max_border_ratio, rsort_key, barcodes_path, sample_size, train_data_path, random_state, \
+    negative_samples_dir
 
 
 @benchmark

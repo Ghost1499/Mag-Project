@@ -1,3 +1,4 @@
+from abc import ABCMeta, abstractmethod
 from pathlib import Path
 from typing import Union
 
@@ -11,17 +12,54 @@ from sklearn.model_selection import learning_curve
 from modules.regions import append_border
 
 
-def save_validation_data(validation_data, save_folder: Union[str, Path], save_ext="jpg"):
-    if not save_folder:
-        raise Exception("Папка для сохранения результатов не задана")
-    if type(save_folder) is not Path:
-        save_folder = Path(save_folder)
+class AValidator():
+    __metaclass__ = ABCMeta
+    _validation_data = []
+    _root_dir: Path
 
-    for i, (img, name, cmap) in enumerate(validation_data):
-        path = save_folder / '.'.join([str(i + 1) + "." + name, save_ext])
+    def add_data(self, data):
+        """
+        Добавление валидационных данных
+        :return:
+        """
+        self._check_data(data)
+        self._validation_data.append(data)
+
+    def save_data(self, save_folder: Union[str, Path]):
+        """
+        Сохранение валидационных данных в директорию
+        :return:
+        """
+        if not save_folder:
+            raise Exception("Папка для сохранения результатов не задана")
+        save_folder = self._root_dir / save_folder
         if not save_folder.is_dir():
             save_folder.mkdir(parents=True)
-        plt.imsave(path, img, cmap=cmap)
+        self._save(save_folder)
+
+    @abstractmethod
+    def _check_data(self, data):
+        pass
+
+    @abstractmethod
+    def _save(self, folder):
+        pass
+
+
+class AImageValidator(AValidator):
+    __metaclass__ = ABCMeta
+    _save_ext: str
+
+    def __init__(self, save_ext):
+        self._save_ext = save_ext
+
+    def _check_data(self, data):
+        pass
+
+    def _save(self, folder):
+        for i, (img, name, cmap) in enumerate(self._validation_data):
+            path = folder / '.'.join([str(i + 1) + "." + name, self._save_ext])
+            plt.imsave(path, img, cmap=cmap)
 
 
 def show_validation_data(validation_data, dpi=300):
@@ -114,3 +152,4 @@ def plot_learning_curve(train_mean,train_std,test_mean,test_std,train_sizes,save
     plt.tight_layout()
     plt.savefig(save_folder / f'Learning_curve_{metric_name}.png', dpi=300)
     plt.show()
+
