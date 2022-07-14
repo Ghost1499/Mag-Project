@@ -32,18 +32,18 @@ from params_config import min_box_area, max_box_area, n_box_sides_steps, min_sid
 @benchmark
 def main():
     test_dir = os.path.normpath("C:/Users/zgstv/OneDrive/Изображения/vend_machines")
-    # test_dir = os.path.normpath("C:/Users/zgstv/OneDrive/Изображения/vend_machines2")
+    # source_dir = os.path.normpath("C:/Users/zgstv/OneDrive/Изображения/vend_machines2")
     result_dir = Path(r"C:\Users\zgstv\JupyterLab Notebooks\Mag-Project\Segmentation_sh\data\validation_images\v")
     clf = load(r'data\\model.joblib')
     # result_dir = os.path.abspath("data/train_data")
     # result_dir = os.path.abspath("data/barcodes2")
     # find_barcode(r"C:\Users\zgstv\JupyterLab Notebooks\Mag-Project\Segmentation_sh\data\test_images\2021-10"
     #              r"-20_13_32_07_783.png",valid_data_path)
-    # test_from_dir(test_dir, result_dir)
-    # walk_dir(test_dir,result_dir,find_barcode,clf)
+    # test_from_dir(source_dir, result_dir)
+    # walk_dir(source_dir,result_dir,find_barcode,clf)
     # scores = evaluate(data_path)
     scores = load(r'data/scores.joblib')
-    json.dump( scores, open(r"data/scores.json", 'w' ) )
+    json.dump(scores, open(r"data/scores.json", 'w'))
     print(scores)
 
 
