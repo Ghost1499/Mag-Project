@@ -15,8 +15,8 @@ scale = 0.2
 # alpha=1
 # alphas = list(np.linspace(0.1,1,4,True))
 alphas = [0.5]
-
 beta = 1
+w_edge = 1
 rotate_angle = -4
 axis = 1
 slices_count = 5
@@ -38,10 +38,12 @@ def perform_classification(img, save_dir):
     # print(cropped.shape)
     downscaled = _downscale(cropped, scale)
     init = _get_init_snake(*downscaled.shape)
+    if not alphas:
+        raise ValueError("Значения alpha для сегментации не заданы")
     for alpha in alphas:
-        snake = _segment(downscaled, init, alpha, beta)
+        snake = _segment(downscaled, init, alpha, beta, w_edge)
         fig, ax = _draw(downscaled, init, snake)
-        fig.savefig(save_dir / f"Snake_rescale{scale}_alpha{alpha}_beta{beta}.png")
+        fig.savefig(save_dir / f"Snake_rescale{scale}_alpha{alpha}_beta{beta}_w_edge{w_edge}.png")
         plt.close(fig)
     contours, hierarchy, mask = _mask_from_snake(snake, downscaled.shape)
     cnt = contours[0]
@@ -191,7 +193,8 @@ def test_from_folder():
 
 def test_single():
     test_bottle_path = Path(
-        r'C:\Users\zgstv\OneDrive\Изображения\vend_machines_ab3_in_box\Aluminium\20220713_081216.jpg')
+        r'C:\Users\zgstv\OneDrive\Изображения\vend_machines_ab3_in_box\Aluminium\20220713_080432.jpg'
+    )
     save_path = Path(rf'data/segmentation/{test_bottle_path.stem}')
     if not save_path.is_dir():
         save_path.mkdir(parents=True)
@@ -202,3 +205,4 @@ def test_single():
 if __name__ == '__main__':
     # test_from_folder()
     test_single()
+

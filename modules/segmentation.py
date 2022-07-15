@@ -29,8 +29,9 @@ def _get_init_snake(h, w):
     return init
 
 
-def _segment(img, init, alpha, beta):
-    snake = active_contour(gaussian(img, 3, preserve_range=False), init, alpha=alpha, beta=beta, gamma=0.001)
+def _segment(img, init, alpha, beta, w_edge):
+    snake = active_contour(gaussian(img, 3, preserve_range=False), init, alpha=alpha, beta=beta, gamma=0.001,
+                           w_edge=w_edge)
     return snake
 
 
