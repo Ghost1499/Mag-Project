@@ -11,8 +11,8 @@ def _rotate_to_normal(img, angle):
     return rotate(img, angle, resize=True, mode="edge")
 
 
-def _crop_to_normal(img):
-    return img[2328:5120, 865:7257]
+def _crop_to_normal(img, crop_bounds):
+    return img[crop_bounds]
 
 
 def _downscale(img, scale):

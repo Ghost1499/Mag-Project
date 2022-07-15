@@ -21,6 +21,8 @@ rotate_angle = -4
 axis = 1
 slices_count = 5
 score_thresh = 0.07
+# crop bounds was manual created
+crop_slices = (slice(2328, 5120), slice(865, 7257))
 
 
 def perform_classification(img, save_dir):
@@ -33,7 +35,7 @@ def perform_classification(img, save_dir):
         raise ValueError(f"Входное изображение имеет не подходящее число каналов - {gray.ndim}")
     rotated = _rotate_to_normal(gray, rotate_angle)
     # plt.imsave(save_dir/f'Rotate by {rotate_angle} degrees.png',rotated,cmap='gray')
-    cropped = _crop_to_normal(rotated)
+    cropped = _crop_to_normal(rotated, crop_slices)
     plt.imsave(save_dir / f'Cropped.png', cropped, cmap='gray')
     # print(cropped.shape)
     downscaled = _downscale(cropped, scale)
@@ -46,8 +48,6 @@ def perform_classification(img, save_dir):
         fig.savefig(save_dir / f"Snake_rescale{scale}_alpha{alpha}_beta{beta}_w_edge{w_edge}.png")
         plt.close(fig)
     contours, hierarchy, mask = _mask_from_snake(snake, downscaled.shape)
-    cnt = contours[0]
-    # plt.imsave(save_dir/"Contours.png",cv.drawContours(np.uint8(np.copy(downscaled) * 255), [cnt], -1, 255, 1),cmap='gray')
     plt.imsave(save_dir / "Mask.png", mask, cmap='gray')
 
     score, tare_type = _classify(mask, save_dir)
@@ -60,7 +60,7 @@ def perform_classification(img, save_dir):
 def _classify(mask, save_dir):
     slices, _ = make_slices(mask, axis=axis, slices_count=slices_count, save=True,
                             fname=str(save_dir / f"Slices axis{axis} slices_count{slices_count}"))
-    ratios = slices_ratios(slices)
+    ratios = get_slices_ratios(slices)
     diff = abs(ratios[-1] - ratios[0])
     # print(f"Заполненная площадь слайсов: {ratios}\nРазница между первым и последним: {diff}\n")
     tare_type = 0
@@ -75,8 +75,6 @@ def crop_object(mask):
     ymax = nonzero[0].max()
     xmin = nonzero[1].min()
     xmax = nonzero[1].max()
-    # mask.shape
-    # ymin,ymax
     return mask[ymin:ymax, xmin:xmax], (ymin, ymax, xmin, xmax)
 
 
@@ -98,11 +96,11 @@ def _make_indent(mask, indent, axis):
     return mask
 
 
-def sclice_vertical(mask, slices_count):
+def slice_vertical(mask, slices_count):
     return _slice_img(mask, slices_count, 0)
 
 
-def sclice_horizontal(mask, slices_count):
+def slice_horizontal(mask, slices_count):
     return _slice_img(mask, slices_count, 1)
 
 
@@ -113,20 +111,17 @@ def _slice_img(mask, slices_count, axis):
     return slices, bounds_indexes
 
 
-def draw_slices(mask, bounds_indexes, axis, save, title):
+def draw_slices(mask: np.ndarray, bounds_indexes: np.ndarray, axis: int) -> plt.Figure:
     # axis 0: hline
     # axis 1: vline
-    plt.figure(dpi=500)
-    plt.imshow(mask, cmap='gray')
+    fig, ax = plt.subplots()
+    fig.set_dpi(500)
+    ax.imshow(mask, cmap='gray')
     if axis == 0:
         hline(bounds_indexes, mask)
     elif axis == 1:
         vline(bounds_indexes, mask)
-
-    if save:
-        plt.savefig(title + ".jpg")
-    plt.close()
-    # plt.show()
+    return fig
 
 
 def hline(bounds_indexes, mask):
@@ -151,11 +146,13 @@ def make_slices(mask, axis=0, slices_count=9, y_indent=0.05, x_indent=0.02, save
     mask = make_indents(mask, y_indent, x_indent)
 
     slices, bounds_indexes = _slice_img(mask, slices_count, axis)
-    draw_slices(mask, bounds_indexes, axis, save, fname)
+    slices_figure = draw_slices(mask, bounds_indexes, axis)
+    if save:
+        slices_figure.savefig(fname + '.jpg')
     return slices, bounds_indexes
 
 
-def slices_ratios(slices):
+def get_slices_ratios(slices):
     slices_ratios = []
     for sl in slices:
         slices_ratios.append(np.mean(sl) / 255)
