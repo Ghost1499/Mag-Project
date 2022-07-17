@@ -1,4 +1,4 @@
-from abc import ABCMeta, abstractmethod
+from abc import abstractmethod, ABC
 from pathlib import Path
 from typing import Union
 
@@ -12,8 +12,7 @@ from sklearn.model_selection import learning_curve
 from modules.regions import append_border
 
 
-class AValidator():
-    __metaclass__ = ABCMeta
+class AValidator(ABC):
     _validation_data = []
     _root_dir: Path
 
@@ -46,8 +45,7 @@ class AValidator():
         pass
 
 
-class AImageValidator(AValidator):
-    __metaclass__ = ABCMeta
+class AImageValidator(AValidator, ABC):
     _save_ext: str
 
     def __init__(self, save_ext):
@@ -60,6 +58,29 @@ class AImageValidator(AValidator):
         for i, (img, name, cmap) in enumerate(self._validation_data):
             path = folder / '.'.join([str(i + 1) + "." + name, self._save_ext])
             plt.imsave(path, img, cmap=cmap)
+
+
+def validator(self, *valid_args):
+    def wrapper(func):
+        def wrapped(*args, **kwargs):
+            res = func(*args, **kwargs)
+            self._validation_data.append((res, *valid_args))
+            return res
+
+        return wrapped
+
+    return wrapper
+
+
+class Validated:
+    _validation_data = []
+
+    @property
+    def validation_data(self):
+        return self._validation_data
+
+    def _add_vdata(self, *data):
+        self._validation_data.append(data)
 
 
 def show_validation_data(validation_data, dpi=300):
