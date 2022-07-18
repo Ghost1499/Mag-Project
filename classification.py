@@ -192,7 +192,7 @@ def test_single():
     test_bottle_path = Path(
         r'C:\Users\zgstv\OneDrive\Изображения\vend_machines_ab3_in_box\Aluminium\20220713_080432.jpg'
     )
-    save_path = Path(rf'data/segmentation/{test_bottle_path.stem}')
+    save_path = Path(rf'data/classification/{test_bottle_path.stem}')
     if not save_path.is_dir():
         save_path.mkdir(parents=True)
     img = plt.imread(test_bottle_path)
